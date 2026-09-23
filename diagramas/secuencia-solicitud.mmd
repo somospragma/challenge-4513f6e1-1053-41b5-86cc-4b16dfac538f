@@ -1,0 +1,59 @@
+sequenceDiagram
+	title Flujo de Solicitud de Préstamo - Manejo de Latencia e Idempotencia
+
+    participant Cliente
+    participant API_Gateway
+    participant Servicio_Solicitudes
+    participant Cache
+    participant Servicio_Evaluacion
+    participant Buro_Credito
+    participant Cola_Mensajes
+    participant Sistema_Auditoria
+
+    Note over Cliente,API_Gateway: Inicio de solicitud
+    Cliente->>API_Gateway: POST /prestamos (númeroOperación=123, canal=WEB)
+    API_Gateway->>Servicio_Solicitudes: Rutea solicitud
+
+    Note over Servicio_Solicitudes: Verificación de idempotencia
+    Servicio_Solicitudes->>Cache: GET idempotencia:123:WEB
+    alt Existe clave en caché
+        Cache-->>Servicio_Solicitudes: 200 OK (Solicitud duplicada)
+        Servicio_Solicitudes-->>API_Gateway: 409 Conflict
+        API_Gateway-->>Cliente: 409 Conflict (Solicitud duplicada)
+    else No existe clave
+        Servicio_Solicitudes->>Cache: SET idempotencia:123:WEB (TTL: 24h)
+        Servicio_Solicitudes->>Servicio_Evaluacion: gRPC EvaluarRiesgo(clienteId=456)
+        
+        Note over Servicio_Evaluacion: Consulta buró con retry y timeout
+        Servicio_Evaluacion->>Buro_Credito: GET /datos-crediticios?clienteId=456
+        alt Latencia ≤ 2s
+            Buro_Credito-->>Servicio_Evaluacion: 200 OK (Datos crediticios)
+            Servicio_Evaluacion->>Cache: SET buro:456 (TTL: 24h)
+        else Latencia > 2s
+            Buro_Credito-->>Servicio_Evaluacion: Timeout
+            Servicio_Evaluacion->>Servicio_Evaluacion: Reintento (max 2)
+            Servicio_Evaluacion->>Buro_Credito: GET /datos-crediticios?clienteId=456
+            alt Reintento exitoso
+                Buro_Credito-->>Servicio_Evaluacion: 200 OK
+                Servicio_Evaluacion->>Cache: SET buro:456 (TTL: 24h)
+            else Reintento fallido
+                Servicio_Evaluacion-->>Servicio_Solicitudes: 504 Gateway Timeout
+                Servicio_Solicitudes->>Cache: DEL idempotencia:123:WEB
+                Servicio_Solicitudes-->>API_Gateway: 504 Gateway Timeout
+                API_Gateway-->>Cliente: 504 Gateway Timeout
+                Note right of Servicio_Solicitudes: Solicitud fallida - clave removida
+            end
+        end
+        
+        Note over Servicio_Solicitudes: Procesamiento de respuesta
+        alt Evaluación exitosa
+            Servicio_Solicitudes->>Cola_Mensajes: Publica EventoAceptacionPrestamo
+            Cola_Mensajes->>Sistema_Auditoria: Consume evento
+            Servicio_Solicitudes-->>API_Gateway: 201 Created
+            API_Gateway-->>Cliente: 201 Created
+        else Evaluación rechazada
+            Servicio_Solicitudes-->>API_Gateway: 400 Bad Request
+            API_Gateway-->>Cliente: 400 Bad Request
+            Servicio_Solicitudes->>Cache: DEL idempotencia:123:WEB
+        end
+    end"

@@ -1,0 +1,109 @@
+asyncapi: 2.6.0
+info:
+  title: Eventos de Auditoría para Préstamos
+  version: 1.0.0
+  description: |
+    Especificación de los eventos emitidos por el sistema de préstamos para auditoría.
+    Cada vez que una solicitud de préstamo es aprobada, se emite un evento
+    con los detalles relevantes para registro en el sistema de auditoría.
+servers:
+  produccion:
+    url: broker.financiera.com:9092
+    protocol: kafka
+    description: Servidor Kafka de producción
+  pruebas:
+    url: sandbox.broker.financiera.com:9092
+    protocol: kafka
+    description: Servidor Kafka de pruebas
+channels:
+  prestamos/auditoria/prestamoAprobado:
+    description: Canal para eventos de aprobación de préstamos
+    subscribe:
+      summary: Evento de aprobación de préstamo
+      operationId: emitirPrestamoAprobado
+      message:
+        name: PrestamoAprobadoEvent
+        title: Evento de préstamo aprobado
+        payload:
+          type: object
+          required:
+            - eventoId
+            - solicitudId
+            - clienteId
+            - fechaAprobacion
+            - montoAprobado
+            - plazoMeses
+            - canal
+            - usuarioAprobador
+          properties:
+            eventoId:
+              type: string
+              format: uuid
+              description: Identificador único del evento
+              example: "550e8400-e29b-41d4-a716-446655440000"
+            solicitudId:
+              type: string
+              description: ID único de la solicitud de préstamo
+              pattern: "^SOL-[0-9]{4}-[0-9]{5}$"
+              example: "SOL-2023-98765"
+            clienteId:
+              type: string
+              description: Identificador único del cliente
+              pattern: "^CLI-[0-9]{6}$"
+              example: "CLI-987654"
+            fechaAprobacion:
+              type: string
+              format: date-time
+              description: Fecha y hora de aprobación del préstamo
+              example: "2023-11-15T10:35:00Z"
+            montoAprobado:
+              type: number
+              description: Monto aprobado en pesos colombianos
+              minimum: 1000000
+              maximum: 100000000
+              example: 4800000
+            plazoMeses:
+              type: integer
+              description: Plazo del préstamo en meses
+              minimum: 6
+              maximum: 84
+              example: 36
+            canal:
+              type: string
+              description: Canal desde el cual se originó la solicitud
+              enum: [MOVIL, WEB, SUCURSAL, CALL_CENTER]
+              example: "MOVIL"
+            usuarioAprobador:
+              type: string
+              description: Usuario que aprobó el préstamo
+              pattern: "^USR-[0-9]{6}$"
+              example: "USR-123456"
+            tasaInteres:
+              type: number
+              format: float
+              description: Tasa de interés anual aplicada (opcional)
+              minimum: 0.01
+              maximum: 100.0
+              example: 12.5
+            scoreBuro:
+              type: integer
+              description: Score del buró de crédito (opcional)
+              minimum: 300
+              maximum: 850
+              example: 720
+            detallesAdicionales:
+              type: object
+              description: Detalles adicionales relevantes para auditoría
+              additionalProperties: true
+              example:
+                riesgo: "MEDIO"
+                productosAdicionales: ["SEGURO_DESEMPLEO", "SEGURO_VIDA"]
+    bindings:
+      kafka:
+        groupId:
+          type: string
+          enum: ["auditoria-consumer-group"]
+        clientId:
+          type: string
+          enum: ["prestamos-service-producer"]
+        bindingVersion: "0.4.0"

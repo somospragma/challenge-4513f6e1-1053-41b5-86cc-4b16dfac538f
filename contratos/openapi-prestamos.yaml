@@ -1,0 +1,308 @@
+openapi: 3.1.0
+info:
+  title: API de Solicitud de Préstamos
+  description: |
+    API para gestionar solicitudes de préstamos en una entidad financiera.
+    Soporta idempotencia para evitar duplicados en solicitudes dentro de un periodo de 24 horas.
+    Integra datos de buró de crédito externo con posibles latencias de hasta 2 segundos.
+  version: 1.0.0
+  contact:
+    name: Equipo de Arquitectura
+    email: arquitectura@financiera.com
+servers:
+  - url: https://api.financiera.com/prestamos/v1
+    description: Servidor de producción
+  - url: https://sandbox.api.financiera.com/prestamos/v1
+    description: Servidor de pruebas
+paths:
+  /solicitudes:
+    post:
+      summary: Crear una solicitud de préstamo
+      description: |
+        Crea una nueva solicitud de préstamo. La operación es idempotente:
+        si se recibe una solicitud con el mismo `numeroOperacion` y `canal` dentro
+        de las últimas 24 horas, se devuelve la respuesta original sin procesar
+        nuevamente la solicitud.
+      operationId: crearSolicitudPrestamo
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SolicitudPrestamoRequest'
+            examples:
+              solicitudEjemplo:
+                value:
+                  numeroOperacion: "OP-2023-123456"
+                  canal: "MOVIL"
+                  clienteId: "CLI-987654"
+                  monto: 5000000
+                  plazoMeses: 36
+                  proposito: "REFINANCIACION"
+      responses:
+        "201":
+          description: Solicitud creada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolicitudPrestamoResponse'
+              examples:
+                respuestaExitosa:
+                  value:
+                    solicitudId: "SOL-2023-98765"
+                    estado: "EN_EVALUACION"
+                    numeroOperacion: "OP-2023-123456"
+                    canal: "MOVIL"
+                    fechaCreacion: "2023-11-15T10:30:00Z"
+        "200":
+          description: Respuesta idempotente para solicitud duplicada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolicitudPrestamoResponse'
+              examples:
+                respuestaIdempotente:
+                  value:
+                    solicitudId: "SOL-2023-98765"
+                    estado: "EN_EVALUACION"
+                    numeroOperacion: "OP-2023-123456"
+                    canal: "MOVIL"
+                    fechaCreacion: "2023-11-15T10:30:00Z"
+        "400":
+          description: Solicitud inválida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                errorValidacion:
+                  value:
+                    codigo: "VALIDACION_ERROR"
+                    mensaje: "El monto solicitado excede el límite permitido para el cliente"
+                    detalles:
+                      - campo: "monto"
+                        error: "Debe ser menor o igual a 10000000"
+        "429":
+          description: Límite de throughput excedido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                limiteExcedido:
+                  value:
+                    codigo: "THROUGHPUT_EXCEDIDO"
+                    mensaje: "Se ha excedido el límite de solicitudes permitidas por hora"
+        "500":
+          description: Error interno del servidor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                errorInterno:
+                  value:
+                    codigo: "ERROR_INTERNO"
+                    mensaje: "Ocurrió un error al procesar la solicitud"
+        "503":
+          description: Servicio no disponible por latencia en buró de crédito
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                buróNoDisponible:
+                  value:
+                    codigo: "BURO_NO_DISPONIBLE"
+                    mensaje: "El servicio de buró de crédito no responde en el tiempo esperado"
+                    detalles:
+                      - tiempoEspera: "2000ms"
+  /solicitudes/{solicitudId}:
+    get:
+      summary: Obtener estado de una solicitud
+      description: Obtiene el estado actual de una solicitud de préstamo.
+      operationId: obtenerEstadoSolicitud
+      parameters:
+        - $ref: '#/components/parameters/SolicitudId'
+      responses:
+        "200":
+          description: Estado de la solicitud
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolicitudPrestamoResponse'
+              examples:
+                estadoAprobado:
+                  value:
+                    solicitudId: "SOL-2023-98765"
+                    estado: "APROBADO"
+                    numeroOperacion: "OP-2023-123456"
+                    canal: "MOVIL"
+                    fechaCreacion: "2023-11-15T10:30:00Z"
+                    fechaAprobacion: "2023-11-15T10:35:00Z"
+                    montoAprobado: 4800000
+        "404":
+          description: Solicitud no encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                noEncontrado:
+                  value:
+                    codigo: "SOLICITUD_NO_ENCONTRADA"
+                    mensaje: "No se encontró la solicitud con ID SOL-2023-99999"
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: |
+        Clave de idempotencia compuesta por `numeroOperacion` y `canal`.
+        Formato: `numeroOperacion|canal` (ej: "OP-2023-123456|MOVIL").
+        Si se recibe una solicitud con la misma clave dentro de 24 horas,
+        se devuelve la respuesta original.
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Z0-9-]+\\|[A-Z]+$"
+        example: "OP-2023-123456|MOVIL"
+    SolicitudId:
+      name: solicitudId
+      in: path
+      description: ID único de la solicitud de préstamo
+      required: true
+      schema:
+        type: string
+        pattern: "^SOL-[0-9]{4}-[0-9]{5}$"
+        example: "SOL-2023-98765"
+  schemas:
+    SolicitudPrestamoRequest:
+      type: object
+      required:
+        - numeroOperacion
+        - canal
+        - clienteId
+        - monto
+        - plazoMeses
+        - proposito
+      properties:
+        numeroOperacion:
+          type: string
+          description: Número único de operación generado por el canal
+          pattern: "^[A-Z]{2}-[0-9]{4}-[0-9]{6}$"
+          example: "OP-2023-123456"
+        canal:
+          type: string
+          description: Canal desde el cual se origina la solicitud
+          enum: [MOVIL, WEB, SUCURSAL, CALL_CENTER]
+          example: "MOVIL"
+        clienteId:
+          type: string
+          description: Identificador único del cliente
+          pattern: "^CLI-[0-9]{6}$"
+          example: "CLI-987654"
+        monto:
+          type: number
+          description: Monto solicitado en pesos colombianos
+          minimum: 1000000
+          maximum: 100000000
+          example: 5000000
+        plazoMeses:
+          type: integer
+          description: Plazo del préstamo en meses
+          minimum: 6
+          maximum: 84
+          example: 36
+        proposito:
+          type: string
+          description: Propósito del préstamo
+          enum: [LIBRE_INVERSION, VIVIENDA, VEHICULO, EDUCACION, REFINANCIACION]
+          example: "REFINANCIACION"
+    SolicitudPrestamoResponse:
+      type: object
+      required:
+        - solicitudId
+        - estado
+        - numeroOperacion
+        - canal
+        - fechaCreacion
+      properties:
+        solicitudId:
+          type: string
+          description: ID único de la solicitud generado por el sistema
+          pattern: "^SOL-[0-9]{4}-[0-9]{5}$"
+          example: "SOL-2023-98765"
+        estado:
+          type: string
+          description: Estado actual de la solicitud
+          enum: [EN_EVALUACION, APROBADO, RECHAZADO, DESEMBOLSADO, CANCELADO]
+          example: "EN_EVALUACION"
+        numeroOperacion:
+          type: string
+          description: Número único de operación generado por el canal
+          pattern: "^[A-Z]{2}-[0-9]{4}-[0-9]{6}$"
+          example: "OP-2023-123456"
+        canal:
+          type: string
+          description: Canal desde el cual se originó la solicitud
+          enum: [MOVIL, WEB, SUCURSAL, CALL_CENTER]
+          example: "MOVIL"
+        fechaCreacion:
+          type: string
+          format: date-time
+          description: Fecha y hora de creación de la solicitud
+          example: "2023-11-15T10:30:00Z"
+        fechaAprobacion:
+          type: string
+          format: date-time
+          description: Fecha y hora de aprobación (solo para estado APROBADO)
+          example: "2023-11-15T10:35:00Z"
+        montoAprobado:
+          type: number
+          description: Monto aprobado en pesos colombianos (solo para estado APROBADO)
+          minimum: 1000000
+          maximum: 100000000
+          example: 4800000
+    ErrorResponse:
+      type: object
+      required:
+        - codigo
+        - mensaje
+      properties:
+        codigo:
+          type: string
+          description: Código del error
+          enum: 
+            - VALIDACION_ERROR
+            - SOLICITUD_NO_ENCONTRADA
+            - THROUGHPUT_EXCEDIDO
+            - ERROR_INTERNO
+            - BURO_NO_DISPONIBLE
+            - OPERACION_DUPLICADA
+          example: "VALIDACION_ERROR"
+        mensaje:
+          type: string
+          description: Mensaje descriptivo del error
+          example: "El monto solicitado excede el límite permitido"
+        detalles:
+          type: array
+          description: Detalles adicionales del error (opcional)
+          items:
+            type: object
+            properties:
+              campo:
+                type: string
+                description: Nombre del campo con error
+                example: "monto"
+              error:
+                type: string
+                description: Descripción del error en el campo
+                example: "Debe ser menor o igual a 10000000"
+              tiempoEspera:
+                type: string
+                description: Tiempo de espera (para errores de latencia)
+                example: "2000ms"
+"

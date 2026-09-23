@@ -1,0 +1,33 @@
+C4Container
+	title Sistema de Préstamos - Diagrama de Contenedores
+
+    System_Boundary(sistemaPrestamos, "Sistema de Préstamos") {
+        Container(apiGateway, "API Gateway", "Spring Cloud Gateway", "Expone APIs RESTful para clientes y sistemas externos")
+        Container(servicioSolicitudes, "Servicio de Solicitudes", "Java/Spring Boot", "Gestiona el ciclo de vida de las solicitudes de préstamo")
+        Container(servicioEvaluacion, "Servicio de Evaluación", "Java/Spring Boot", "Evalúa el riesgo crediticio de las solicitudes")
+        Container(servicioAuditoria, "Servicio de Auditoría", "Java/Spring Boot", "Emite eventos de auditoría a Kafka")
+        ContainerDb(baseDatos, "Base de Datos", "PostgreSQL", "Almacena solicitudes, clientes y operaciones")
+        Container(colaMensajes, "Cola de Mensajes", "Kafka", "Gestiona eventos de auditoría y reintentos")
+        Container(cache, "Caché", "Redis", "Almacena respuestas del buró de crédito y solicitudes idempotentes")
+    }
+
+    System_Ext(buroCredito, "Buró de Crédito", "Servicio externo")
+    System_Ext(sistemaAuditoria, "Sistema de Auditoría", "Sistema externo")
+    System_Ext(coreFinanciero, "Core Financiero", "Sistema externo")
+
+    Rel(apiGateway, servicioSolicitudes, "Rutea solicitudes", "REST")
+    Rel(servicioSolicitudes, servicioEvaluacion, "Solicita evaluación", "gRPC")
+    Rel(servicioEvaluacion, buroCredito, "Consulta datos crediticios", "REST")
+    Rel(servicioEvaluacion, cache, "Almacena respuestas del buró", "Redis")
+    Rel(servicioSolicitudes, servicioAuditoria, "Envía evento de aceptación", "Kafka")
+    Rel(servicioAuditoria, colaMensajes, "Publica evento", "Kafka")
+    Rel(colaMensajes, sistemaAuditoria, "Consume evento", "Kafka")
+    Rel(servicioSolicitudes, baseDatos, "Persiste solicitudes", "JDBC")
+    Rel(servicioSolicitudes, cache, "Verifica idempotencia", "Redis")
+    Rel(servicioSolicitudes, coreFinanciero, "Genera desembolso", "REST")
+
+    UpdateLayoutConfig($c4ShapeInRow="4", $c4BoundaryInRow="1")
+
+    BiRel(servicioEvaluacion, cache, "TTL: 24h", "Cache de respuestas")
+    BiRel(servicioSolicitudes, cache, "Clave: número_operación+canal", "Idempotencia")
+    BiRel(servicioSolicitudes, baseDatos, "Transacción ACID", "Consistencia fuerte")

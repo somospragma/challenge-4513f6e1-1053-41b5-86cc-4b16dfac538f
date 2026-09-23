@@ -1,0 +1,22 @@
+C4Context
+	title Sistema de Préstamos - Diagrama de Contexto
+
+    Person(cliente, "Cliente", "Persona que solicita un préstamo")
+    Person(analista, "Analista de Riesgo", "Empleado que revisa solicitudes manualmente")
+
+    System(sistemaPrestamos, "Sistema de Préstamos", "Sistema principal que gestiona solicitudes, evaluación y aprobación de préstamos")
+
+    System_Ext(buroCredito, "Buró de Crédito", "Servicio externo que proporciona datos crediticios del cliente")
+    System_Ext(sistemaAuditoria, "Sistema de Auditoría", "Sistema externo que registra eventos de aceptación de préstamos")
+    System_Ext(coreFinanciero, "Core Financiero", "Sistema externo que gestiona desembolsos y cobros")
+
+    Rel(cliente, sistemaPrestamos, "Solicita préstamo", "HTTPS")
+    Rel(sistemaPrestamos, buroCredito, "Consulta datos crediticios", "HTTPS")
+    Rel(sistemaPrestamos, sistemaAuditoria, "Envía evento de aceptación", "Kafka")
+    Rel(sistemaPrestamos, coreFinanciero, "Genera desembolso", "REST")
+    Rel(analista, sistemaPrestamos, "Revisa solicitudes pendientes", "HTTPS")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
+
+    BiRel(sistemaPrestamos, buroCredito, "Latencia ≤ 2s", "SLA: 99.9%")
+    BiRel(sistemaPrestamos, sistemaAuditoria, "Idempotencia por número de operación", "Período: 24h")
